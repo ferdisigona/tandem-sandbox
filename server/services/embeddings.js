@@ -1,25 +1,20 @@
-import fetch from "node-fetch";
-
 import config from "../config.js";
+import { getOpenAIClient } from "./openaiClient.js";
 
 export async function embedText(text, options = {}) {
-  const { baseUrl, embeddingModel } = { ...config.ollama, ...options };
+  const client = getOpenAIClient();
+  const { embeddingModel } = { ...config.openai, ...options };
 
-  const res = await fetch(`${baseUrl}/api/embeddings`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: embeddingModel,
-      input: text,
-    }),
+  const response = await client.embeddings.create({
+    model: embeddingModel,
+    input: text,
   });
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Ollama embedding failed: ${res.status} ${errText}`);
+  const vector = response.data?.[0]?.embedding;
+  if (!Array.isArray(vector)) {
+    throw new Error("OpenAI embedding response missing vector data");
   }
 
-  const data = await res.json();
-  return data.embedding;
+  return vector;
 }
 

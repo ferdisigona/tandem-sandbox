@@ -1,6 +1,5 @@
 import { Router } from "express";
 
-import config from "../config.js";
 import { summarizeConversation } from "../services/analyzer.js";
 
 const router = Router();
@@ -37,10 +36,7 @@ router.post("/analyze", async (req, res) => {
   }
 
   try {
-    const result = await summarizeConversation(
-      conversationText,
-      config.defaultAnalyzer
-    );
+    const result = await summarizeConversation(conversationText);
     res.json(result);
   } catch (err) {
     console.error("Error in /analyze:", err);
@@ -63,10 +59,7 @@ router.post("/analyze-batch", async (req, res) => {
   }
 
   try {
-    const result = await summarizeConversation(
-      conversationText,
-      config.batchAnalyzer
-    );
+    const result = await summarizeConversation(conversationText);
     res.json(result);
   } catch (err) {
     console.error("Error in /analyze-batch:", err);

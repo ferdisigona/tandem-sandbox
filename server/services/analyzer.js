@@ -1,5 +1,3 @@
-import fetch from "node-fetch";
-
 import config from "../config.js";
 import { getOpenAIClient } from "./openaiClient.js";
 
@@ -28,53 +26,15 @@ function extractJsonContent(raw) {
   }
 }
 
-export async function summarizeWithOllama(conversationText, options = {}) {
-  const { baseUrl, model } = { ...config.ollama, ...options };
-
-  const prompt = `
-You are a conversation analyst.
-Given the following chat transcript, do two things:
-1. Summarize it in one or two sentences.
-2. Label its overall emotional tone as one of: "positive", "neutral", "negative", or "mixed".
-Respond ONLY with valid JSON using this exact format:
-{"summary": "...", "mood": "..."}
-
-Chat:
-${conversationText}
-`;
-
-  const response = await fetch(`${baseUrl}/api/generate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model,
-      prompt,
-      stream: false,
-    }),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Ollama generate failed: ${response.status} ${errText}`);
-  }
-
-  const data = await response.json();
-  const text = data.response?.trim();
-
-  if (!text) {
-    console.warn("⚠️ Ollama returned empty response");
-    return { summary: "No summary.", mood: "neutral" };
-  }
-
-  return extractJsonContent(text);
-}
-
 export async function summarizeWithOpenAI(conversationText, options = {}) {
   const client = getOpenAIClient();
-  const { model, temperature } = { ...config.openai, ...options };
+  const { chatModel, temperature } = {
+    ...config.openai,
+    ...options,
+  };
 
   const completion = await client.chat.completions.create({
-    model,
+    model: chatModel,
     temperature,
     messages: [
       {
@@ -93,13 +53,7 @@ Respond ONLY with a valid JSON object like this:
   return extractJsonContent(raw);
 }
 
-export async function summarizeConversation(
-  conversationText,
-  provider = config.defaultAnalyzer
-) {
-  if (provider === "ollama") {
-    return summarizeWithOllama(conversationText);
-  }
+export async function summarizeConversation(conversationText) {
   return summarizeWithOpenAI(conversationText);
 }
 
