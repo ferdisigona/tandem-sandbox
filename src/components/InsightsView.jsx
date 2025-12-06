@@ -127,7 +127,11 @@ function buildConversationText(messages) {
         ? msg.sender.trim()
         : "Unknown";
       const text = msg.text.replace(/\s+/g, " ").trim();
-      return `${sender}: ${text}`;
+      const date = typeof msg.date === "string" ? msg.date.trim() : "";
+      const time = typeof msg.time === "string" ? msg.time.trim() : "";
+      const timestamp = [date, time].filter(Boolean).join(" ");
+      const prefix = timestamp ? `[${timestamp}] ` : "";
+      return `${prefix}${sender}: ${text}`;
     })
     .join("\n");
 }
@@ -201,6 +205,234 @@ function normalizeTopics(topics, limit = 5) {
     .slice(0, limit);
 }
 
+function normalizeTodoDate(value) {
+  if (!value || typeof value !== "string") {
+    return null;
+  }
+
+  const cleaned = value.trim();
+  if (!cleaned) {
+    return null;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) {
+    return cleaned;
+  }
+
+  const slashMatch = cleaned.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  if (slashMatch) {
+    const [, mStr, dStr, yStrRaw] = slashMatch;
+    const year = yStrRaw.length === 2 ? Number(`20${yStrRaw}`) : Number(yStrRaw);
+    const month = Number(mStr);
+    const day = Number(dStr);
+    if (
+      Number.isInteger(year) &&
+      Number.isInteger(month) &&
+      Number.isInteger(day) &&
+      month >= 1 &&
+      month <= 12 &&
+      day >= 1 &&
+      day <= 31
+    ) {
+      const yyyy = String(year).padStart(4, "0");
+      const mm = String(month).padStart(2, "0");
+      const dd = String(day).padStart(2, "0");
+      return `${yyyy}-${mm}-${dd}`;
+    }
+  }
+
+  const parsed = new Date(cleaned);
+  if (!Number.isNaN(parsed?.getTime?.())) {
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  return null;
+}
+
+function pickEarlierDate(a, b) {
+  if (a && !b) return a;
+  if (b && !a) return b;
+  if (!a && !b) return null;
+  return a <= b ? a : b;
+}
+
+function normalizeTodoItems(value, limit = 12, fallbackDate = null) {
+  if (!Array.isArray(value)) {
+    if (value && typeof value === "object" && Array.isArray(value.items)) {
+      return normalizeTodoItems(value.items, limit, fallbackDate);
+    }
+    return [];
+  }
+
+  const seen = new Map();
+  const todos = [];
+  const normalizedFallback = normalizeTodoDate(fallbackDate);
+
+  value.forEach((entry) => {
+    if (!entry) return;
+
+    let task = "";
+    let assignee = "Unassigned";
+    let date = null;
+
+    if (typeof entry === "string") {
+      const cleaned = entry.trim();
+      if (!cleaned) return;
+
+      const colonIndex = cleaned.indexOf(":");
+      if (colonIndex !== -1) {
+        const potentialAssignee = cleaned.slice(0, colonIndex).trim();
+        const potentialTask = cleaned.slice(colonIndex + 1).trim();
+        if (potentialTask) {
+          assignee = potentialAssignee || "Unassigned";
+          task = potentialTask;
+        }
+      }
+
+      if (!task) {
+        task = cleaned;
+      }
+    } else if (typeof entry === "object") {
+      const taskSource =
+        typeof entry.task === "string"
+          ? entry.task
+          : typeof entry.todo === "string"
+          ? entry.todo
+          : typeof entry.description === "string"
+          ? entry.description
+          : "";
+      task = taskSource.trim();
+      const assigneeSource =
+        typeof entry.assignee === "string"
+          ? entry.assignee
+          : typeof entry.owner === "string"
+          ? entry.owner
+          : typeof entry.person === "string"
+          ? entry.person
+          : "";
+      assignee = assigneeSource.trim() || "Unassigned";
+
+       const dateSource =
+         typeof entry.date === "string"
+           ? entry.date
+           : typeof entry.when === "string"
+           ? entry.when
+           : typeof entry.on === "string"
+           ? entry.on
+           : "";
+       date = normalizeTodoDate(dateSource);
+    }
+
+    if (!task) return;
+
+    if (!date && normalizedFallback) {
+      date = normalizedFallback;
+    }
+
+    const key = `${assignee.toLowerCase()}|${task.toLowerCase()}`;
+    if (seen.has(key)) {
+      const existing = todos[seen.get(key)];
+      existing.date = pickEarlierDate(existing.date || null, date || null);
+      return;
+    }
+
+    const todoEntry = { assignee, task };
+    if (date) {
+      todoEntry.date = date;
+    }
+
+    todos.push(todoEntry);
+    seen.set(key, todos.length - 1);
+  });
+
+  todos.sort((a, b) => {
+    if (!a.date && !b.date) return 0;
+    if (!a.date) return 1;
+    if (!b.date) return -1;
+    return a.date.localeCompare(b.date);
+  });
+
+  return todos.slice(0, limit);
+}
+
+function formatTodoDisplayDate(value) {
+  const normalized = normalizeTodoDate(value);
+  if (!normalized) return null;
+  const [yearStr, monthStr, dayStr] = normalized.split("-");
+  const months = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+  const monthIndex = Number(monthStr) - 1;
+  if (monthIndex < 0 || monthIndex > 11) {
+    return normalized;
+  }
+  const day = Number(dayStr);
+  const month = months[monthIndex];
+  return `${month} ${Number.isNaN(day) ? dayStr : day}, ${yearStr}`;
+}
+
+function collectTodos(overall, segments, limit = 12) {
+  const combined = [];
+  const seen = new Map();
+
+  function addTodos(list, fallbackDate) {
+    const normalized = normalizeTodoItems(list, limit, fallbackDate);
+    normalized.forEach((todo) => {
+      const key = `${todo.assignee.toLowerCase()}|${todo.task.toLowerCase()}`;
+      if (seen.has(key)) {
+        const existing = combined[seen.get(key)];
+        existing.date = pickEarlierDate(existing.date || null, todo.date || null);
+        return;
+      }
+      combined.push(todo);
+      seen.set(key, combined.length - 1);
+    });
+  }
+
+  if (overall) {
+    addTodos(overall.todos, null);
+    addTodos(overall.todoList, null);
+    addTodos(overall.todoItems, null);
+    addTodos(overall.actionItems, null);
+    addTodos(overall.tasks, null);
+  }
+
+  if (Array.isArray(segments)) {
+    segments.forEach((segment) => {
+      if (!segment) return;
+      const fallbackDate =
+        typeof segment.start === "string"
+          ? segment.start.split(" ")[0]
+          : null;
+      addTodos(segment.todos, fallbackDate);
+      addTodos(segment.todoList, fallbackDate);
+      addTodos(segment.todoItems, fallbackDate);
+      addTodos(segment.actionItems, fallbackDate);
+      addTodos(segment.tasks, fallbackDate);
+    });
+  }
+
+  combined.sort((a, b) => {
+    if (!a.date && !b.date) return 0;
+    if (!a.date) return 1;
+    if (!b.date) return -1;
+    return a.date.localeCompare(b.date);
+  });
+
+  return combined.slice(0, limit);
+}
+
 function generateInsightsSummary({ overall, segments, messages, firstDate, lastDate }) {
   const startDate = parseDateString(firstDate);
   const endDate = parseDateString(lastDate);
@@ -250,6 +482,8 @@ function generateInsightsSummary({ overall, segments, messages, firstDate, lastD
     topics = ["Not enough data"];
   }
 
+  const todos = collectTodos(overall, segments);
+
   return {
     timeRange,
     relationshipType,
@@ -258,6 +492,7 @@ function generateInsightsSummary({ overall, segments, messages, firstDate, lastD
       typeof overall?.summary === "string" && overall.summary.trim().length > 0
         ? overall.summary.trim()
         : null,
+    todos,
   };
 }
 
@@ -412,6 +647,32 @@ export default function InsightsView({ chat }) {
                 <li key={topic}>{topic}</li>
               ))}
             </ul>
+          </div>
+          <div style={{ marginTop: "0.75rem" }}>
+            <strong>Action Items:</strong>
+            {summary.todos.length > 0 ? (
+              <ul
+                style={{
+                  marginTop: "0.5rem",
+                  paddingLeft: "1.25rem",
+                  marginBottom: 0,
+                }}
+              >
+                {summary.todos.map((todo) => {
+                  const dateLabel = formatTodoDisplayDate(todo.date) || "Date unknown";
+                  return (
+                    <li key={`${todo.assignee}-${todo.task}-${todo.date || "nodate"}`}>
+                      <strong>{todo.assignee}</strong>: {todo.task}{" "}
+                      <span style={{ color: "#666" }}>[{dateLabel}]</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p style={{ margin: "0.35rem 0 0 0", color: "#555" }}>
+                No clear action items detected.
+              </p>
+            )}
           </div>
         </div>
       )}

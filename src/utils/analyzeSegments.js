@@ -20,7 +20,15 @@ export async function analyzeSegments(messages, onProgress) {
   async function analyzeOne(segment, idx, total) {
     const conversationText = segment
       .filter((m) => m && typeof m.text === "string" && m.text.trim().length > 0)
-      .map((m) => `${m.sender || "Unknown"}: ${m.text.replace(/\s+/g, " ").trim()}`)
+      .map((m) => {
+        const sender = (m.sender || "Unknown").toString().trim() || "Unknown";
+        const text = m.text.replace(/\s+/g, " ").trim();
+        const date = typeof m.date === "string" ? m.date.trim() : "";
+        const time = typeof m.time === "string" ? m.time.trim() : "";
+        const timestamp = [date, time].filter(Boolean).join(" ");
+        const prefix = timestamp ? `[${timestamp}] ` : "";
+        return `${prefix}${sender}: ${text}`;
+      })
       .join("\n");
 
     const baseResult = {
